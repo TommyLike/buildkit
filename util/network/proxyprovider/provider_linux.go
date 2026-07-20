@@ -60,6 +60,13 @@ type Opt struct {
 	PoolSize             int
 	EgressProviders      map[pb.NetMode]network.Provider
 	OwnedEgressProviders []network.Provider
+
+	// UpstreamURL is the URL of an upstream forward proxy (e.g., "http://squid:3128").
+	// When set, the internal MITM proxy forwards all requests through this upstream proxy.
+	UpstreamURL string
+	// UpstreamCACert is an optional path to a PEM-encoded CA certificate used to
+	// verify the upstream proxy's TLS certificate when UpstreamURL uses HTTPS.
+	UpstreamCACert string
 }
 
 func Supported() bool {
@@ -72,6 +79,12 @@ func New(opt Opt) (network.ProxyProvider, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	proxyTransport, err := newProxyTransport(opt.UpstreamURL, opt.UpstreamCACert)
+	if err != nil {
+		return nil, err
+	}
+
 	p := &provider{
 		root:                 opt.Root,
 		caPEM:                certPEM,
@@ -81,7 +94,7 @@ func New(opt Opt) (network.ProxyProvider, error) {
 		lru:                  list.New(),
 		egressProviders:      maps.Clone(opt.EgressProviders),
 		ownedEgressProviders: slices.Clone(opt.OwnedEgressProviders),
-		transport:            newProxyTransport(),
+		transport:            proxyTransport,
 	}
 	p.pool = netpool.New(netpool.Opt[*proxyNS]{
 		Name:       "proxy network namespace",
@@ -95,12 +108,54 @@ func New(opt Opt) (network.ProxyProvider, error) {
 	return p, nil
 }
 
-func newProxyTransport() *http.Transport {
-	return &http.Transport{
-		Proxy:              nil,
+// newProxyTransport creates an http.Transport configured with an optional
+// upstream forward proxy. All validation is performed at creation time so
+// that configuration errors cause the daemon to refuse startup.
+//
+// When upstreamURL is set, the transport routes all requests through it.
+// When upstreamCACert is also set, the certificate is appended to the
+// system trust pool used for ALL TLS connections made by this transport.
+// This is a known limitation: Go's net/http does not provide a separate
+// TLS configuration for the proxy connection vs. the target connection.
+func newProxyTransport(upstreamURL string, upstreamCACert string) (*http.Transport, error) {
+	t := &http.Transport{
 		DisableCompression: true,
 		ForceAttemptHTTP2:  true,
 	}
+
+	if upstreamURL != "" {
+		u, err := neturl.Parse(upstreamURL)
+		if err != nil {
+			return nil, errors.Wrapf(err, "invalid upstream proxy URL %q", upstreamURL)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return nil, errors.Errorf("upstream proxy URL scheme must be http or https, got %q in %q", u.Scheme, upstreamURL)
+		}
+		if u.Host == "" {
+			return nil, errors.Errorf("upstream proxy URL %q has no host", upstreamURL)
+		}
+		t.Proxy = http.ProxyURL(u)
+	}
+
+	if upstreamCACert != "" {
+		certPEM, err := os.ReadFile(upstreamCACert)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to read upstream proxy CA cert from %s", upstreamCACert)
+		}
+
+		rootCAs, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to load system certificate pool for upstream proxy TLS")
+		}
+		if !rootCAs.AppendCertsFromPEM(certPEM) {
+			return nil, errors.Errorf("failed to parse any certificates from upstream proxy CA cert %s", upstreamCACert)
+		}
+		t.TLSClientConfig = &tls.Config{
+			RootCAs: rootCAs,
+		}
+	}
+
+	return t, nil
 }
 
 type provider struct {

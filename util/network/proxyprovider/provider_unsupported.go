@@ -13,6 +13,9 @@ type Opt struct {
 	PoolSize             int
 	EgressProviders      map[pb.NetMode]network.Provider
 	OwnedEgressProviders []network.Provider
+
+	UpstreamURL    string
+	UpstreamCACert string
 }
 
 func Supported() bool {
