@@ -254,6 +254,20 @@ CONNECT DONE client->dest: 1782 bytes
 CONNECT DONE dest->client: 6534 bytes
 ```
 
+### Step A5: 反向验证（错误 CA 应失败） ✅
+
+替换为无关 CA (`wrong-ca.pem`)，代理证书由正确 CA 签发，预期 TLS 握手失败。
+
+构建结果: `502 Bad Gateway`, `exit code: 1`
+代理日志: `http: TLS handshake error from 127.0.0.1:55798: remote error: tls: bad certificate`
+
+正反面对照:
+
+| CA 配置 | 代理日志 | 构建结果 |
+|---------|---------|---------|
+| 正确 CA (ca.pem) | `GET OK -> 200 (559 bytes)` | ✅ 成功 |
+| 错误 CA (wrong-ca.pem) | `TLS handshake error: bad certificate` | ❌ 502 |
+
 **证书链**: `BuildKit Test CA (ca.pem)` → `squid-proxy (squid-san.crt, SAN: localhost, 127.0.0.1)`
 
 **验证的代码路径**:

@@ -119,6 +119,12 @@ other BuildKit sources.
 
 ## Upstream forward proxy (caching proxy)
 
+> [!NOTE]
+> The upstream proxy settings require `proxyNetwork = true` to take effect.
+> Without proxy networking enabled, the internal MITM proxy does not run and
+> the `[proxy]` configuration section is silently unused. See [Enabling proxy
+> networking](#enabling-proxy-networking) above.
+
 BuildKit's internal MITM proxy can be configured to forward all requests
 through an upstream forward proxy, such as a Squid caching proxy. This enables
 cluster-level caching while preserving BuildKit's request capture, policy, and
@@ -127,9 +133,9 @@ provenance features.
 Configure an upstream proxy in `buildkitd.toml`:
 
 ```toml
-proxyNetwork = true
+proxyNetwork = true   # required: enables the internal MITM proxy
 
-[proxy]
+[proxy]               # requires proxyNetwork = true
   upstreamURL = "http://squid.internal:3128"
 ```
 
@@ -148,7 +154,9 @@ If the upstream proxy uses HTTPS (e.g., `https://squid.internal:3128`), provide
 the CA certificate used to verify the upstream proxy's TLS certificate:
 
 ```toml
-[proxy]
+proxyNetwork = true   # required
+
+[proxy]               # requires proxyNetwork = true
   upstreamURL = "https://squid.internal:3128"
   upstreamCACert = "/etc/buildkit/squid-ca.pem"
 ```

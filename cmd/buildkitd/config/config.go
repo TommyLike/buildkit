@@ -65,18 +65,22 @@ type CacheConfig struct {
 }
 
 // ProxyConfig defines upstream proxy settings for the built-in exec proxy.
-// When configured, the internal MITM proxy forwards all requests to the
-// specified upstream proxy (e.g., a Squid caching proxy), preserving
-// capture, policy, and provenance features.
+// These settings only take effect when ProxyNetwork is enabled (via the
+// top-level proxyNetwork config or --proxy-network flag).
+//
+// Without proxyNetwork, the internal MITM proxy does not run and the
+// upstream proxy configuration is silently unused.
 type ProxyConfig struct {
 	// UpstreamURL is the URL of the upstream forward proxy that the
 	// internal MITM proxy forwards requests to.
+	// Requires: proxyNetwork = true
 	// Example: "http://squid.internal:3128"
 	UpstreamURL string `toml:"upstreamURL"`
 
 	// UpstreamCACert is an optional path to a PEM-encoded CA certificate
 	// used to verify the upstream proxy's TLS certificate when connecting
 	// to an HTTPS upstream URL.
+	// Requires: proxyNetwork = true
 	UpstreamCACert string `toml:"upstreamCACert"`
 }
 
