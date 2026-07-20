@@ -22,6 +22,9 @@ type Config struct {
 	// ProxyNetwork enables proxy network enforcement for all builds.
 	ProxyNetwork bool `toml:"proxyNetwork"`
 
+	// Proxy configures the behavior of the built-in exec proxy.
+	Proxy ProxyConfig `toml:"proxy"`
+
 	// LogFormat is the format of the logs. It can be "json" or "text".
 	Log LogConfig `toml:"log"`
 
@@ -59,6 +62,22 @@ type Config struct {
 
 type CacheConfig struct {
 	GHA *ghatypes.CacheConfig `toml:"gha"`
+}
+
+// ProxyConfig defines upstream proxy settings for the built-in exec proxy.
+// When configured, the internal MITM proxy forwards all requests to the
+// specified upstream proxy (e.g., a Squid caching proxy), preserving
+// capture, policy, and provenance features.
+type ProxyConfig struct {
+	// UpstreamURL is the URL of the upstream forward proxy that the
+	// internal MITM proxy forwards requests to.
+	// Example: "http://squid.internal:3128"
+	UpstreamURL string `toml:"upstreamURL"`
+
+	// UpstreamCACert is an optional path to a PEM-encoded CA certificate
+	// used to verify the upstream proxy's TLS certificate when connecting
+	// to an HTTPS upstream URL.
+	UpstreamCACert string `toml:"upstreamCACert"`
 }
 
 type SystemConfig struct {

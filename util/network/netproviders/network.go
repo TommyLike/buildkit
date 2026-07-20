@@ -14,6 +14,11 @@ import (
 type Opt struct {
 	CNI  cniprovider.Opt
 	Mode string
+
+	// ProxyUpstreamURL is the URL of the upstream forward proxy.
+	ProxyUpstreamURL string
+	// ProxyUpstreamCACert is an optional path to a CA cert for the upstream proxy TLS.
+	ProxyUpstreamCACert string
 }
 
 // Providers returns the network provider set.
@@ -79,6 +84,8 @@ func Providers(opt Opt) (providers map[pb.NetMode]network.Provider, proxyProvide
 			Root:            opt.CNI.Root,
 			PoolSize:        opt.CNI.PoolSize,
 			EgressProviders: proxyEgressProviders,
+			UpstreamURL:     opt.ProxyUpstreamURL,
+			UpstreamCACert:  opt.ProxyUpstreamCACert,
 		})
 		if err != nil {
 			return nil, nil, resolvedMode, err

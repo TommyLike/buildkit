@@ -100,7 +100,7 @@ func TestProxyHandlerRoundTripIgnoresClientContextCancel(t *testing.T) {
 }
 
 func TestNewProxyTransportAttemptsHTTP2(t *testing.T) {
-	tr := newProxyTransport()
+	tr := newProxyTransport("", nil)
 	t.Cleanup(tr.CloseIdleConnections)
 
 	// The provider transport is cloned per namespace and given a custom
@@ -120,7 +120,7 @@ func TestProxyTransportCloneHTTP2Dial(t *testing.T) {
 	upstream.StartTLS()
 	t.Cleanup(upstream.Close)
 
-	base := newProxyTransport()
+	base := newProxyTransport("", nil)
 	t.Cleanup(base.CloseIdleConnections)
 
 	tr := base.Clone()

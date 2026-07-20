@@ -117,6 +117,57 @@ applies to GET requests where only the URL is changed.
 This keeps proxy network access aligned with the same policy model used for
 other BuildKit sources.
 
+## Upstream forward proxy (caching proxy)
+
+BuildKit's internal MITM proxy can be configured to forward all requests
+through an upstream forward proxy, such as a Squid caching proxy. This enables
+cluster-level caching while preserving BuildKit's request capture, policy, and
+provenance features.
+
+Configure an upstream proxy in `buildkitd.toml`:
+
+```toml
+proxyNetwork = true
+
+[proxy]
+  upstreamURL = "http://squid.internal:3128"
+```
+
+When `upstreamURL` is set, the internal MITM proxy sends all outgoing requests
+through the specified upstream proxy instead of connecting directly. The build
+containers are unaware of the upstream proxy — they interact only with the
+internal MITM proxy as usual.
+
+### HTTPS upstream proxy
+
+If the upstream proxy uses HTTPS (e.g., `https://squid.internal:3128`), provide
+the CA certificate used to verify the upstream proxy's TLS certificate:
+
+```toml
+[proxy]
+  upstreamURL = "https://squid.internal:3128"
+  upstreamCACert = "/etc/buildkit/squid-ca.pem"
+```
+
+### How it works
+
+With upstream proxy configured, the request flow is:
+
+```
+Container → Internal MITM proxy → Upstream Squid → Internet
+```
+
+- The internal MITM proxy handles HTTP/HTTPS interception, policy evaluation,
+  and request capture.
+- Forwarded requests are sent through the upstream proxy's `Proxy` transport,
+  allowing the upstream proxy to cache responses.
+- HTTPS requests are decrypted by the internal MITM proxy before being forwarded
+  to the upstream proxy, so the upstream proxy can inspect and cache HTTP-level
+  content.
+- The internal proxy's CA certificate is still injected into build containers;
+  the upstream proxy's CA certificate is only used by the internal proxy's
+  transport when connecting to an HTTPS upstream proxy.
+
 ## Scope and limitations
 
 The proxy network feature currently applies to exec traffic. It does not replace

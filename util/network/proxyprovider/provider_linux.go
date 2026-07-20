@@ -60,6 +60,13 @@ type Opt struct {
 	PoolSize             int
 	EgressProviders      map[pb.NetMode]network.Provider
 	OwnedEgressProviders []network.Provider
+
+	// UpstreamURL is the URL of an upstream forward proxy (e.g., "http://squid:3128").
+	// When set, the internal MITM proxy forwards all requests through this upstream proxy.
+	UpstreamURL string
+	// UpstreamCACert is an optional path to a PEM-encoded CA certificate used to
+	// verify the upstream proxy's TLS certificate when UpstreamURL uses HTTPS.
+	UpstreamCACert string
 }
 
 func Supported() bool {
@@ -72,6 +79,15 @@ func New(opt Opt) (network.ProxyProvider, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	var upstreamCACert []byte
+	if opt.UpstreamCACert != "" {
+		upstreamCACert, err = os.ReadFile(opt.UpstreamCACert)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to read upstream proxy CA cert from %s", opt.UpstreamCACert)
+		}
+	}
+
 	p := &provider{
 		root:                 opt.Root,
 		caPEM:                certPEM,
@@ -81,7 +97,7 @@ func New(opt Opt) (network.ProxyProvider, error) {
 		lru:                  list.New(),
 		egressProviders:      maps.Clone(opt.EgressProviders),
 		ownedEgressProviders: slices.Clone(opt.OwnedEgressProviders),
-		transport:            newProxyTransport(),
+		transport:            newProxyTransport(opt.UpstreamURL, upstreamCACert),
 	}
 	p.pool = netpool.New(netpool.Opt[*proxyNS]{
 		Name:       "proxy network namespace",
@@ -95,12 +111,29 @@ func New(opt Opt) (network.ProxyProvider, error) {
 	return p, nil
 }
 
-func newProxyTransport() *http.Transport {
-	return &http.Transport{
-		Proxy:              nil,
+func newProxyTransport(upstreamURL string, upstreamCACert []byte) *http.Transport {
+	t := &http.Transport{
 		DisableCompression: true,
 		ForceAttemptHTTP2:  true,
 	}
+	if upstreamURL != "" {
+		u, err := neturl.Parse(upstreamURL)
+		if err == nil {
+			t.Proxy = http.ProxyURL(u)
+		}
+	}
+	if len(upstreamCACert) > 0 {
+		rootCAs, err := x509.SystemCertPool()
+		if err != nil {
+			rootCAs = x509.NewCertPool()
+		}
+		if rootCAs.AppendCertsFromPEM(upstreamCACert) {
+			t.TLSClientConfig = &tls.Config{
+				RootCAs: rootCAs,
+			}
+		}
+	}
+	return t
 }
 
 type provider struct {
