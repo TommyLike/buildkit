@@ -149,16 +149,115 @@ TCP_TUNNEL/200 6551 CONNECT example.com:443    - HIER_DIRECT/104.20.23.154
 
 ```bash
 sudo pkill buildkitd
+pkill https-proxy
 docker rm -f buildkit-squid-test
 rm -rf /tmp/buildkit-test
 ```
 
+---
+
+## 第二轮测试：HTTPS upstream + CA cert
+
+此轮测试专门验证 `upstreamCACert` 配置的完整代码路径。
+
+### 架构
+
+```
+宿主机
+├── Go HTTPS forward proxy (localhost:3129)
+│   证书: squid-san.crt (CA 签发, SAN: localhost)
+│   记录所有请求到日志
+│
+└── buildkitd
+    upstreamURL = "https://localhost:3129"
+    upstreamCACert = "/tmp/buildkit-test/certs/ca.pem"
+```
+
+### Step A1: 生成 CA + 代理证书 ✅
+
+```bash
+openssl genrsa -out ca.key 2048
+openssl req -new -x509 -days 365 -key ca.key -out ca.pem -subj "/CN=BuildKit Test CA"
+openssl genrsa -out squid.key 2048
+openssl req -new -key squid.key -out squid.csr -config san.cnf  # SAN: localhost, 127.0.0.1
+openssl x509 -req -days 365 -in squid.csr -CA ca.pem -CAkey ca.key \
+  -set_serial 01 -out squid.crt -extfile san.cnf -extensions v3_req
+```
+
+### Step A2: 编译并启动 HTTPS 代理 ✅
+
+Go forward proxy 代码处理 HTTP GET 转发和 HTTPS CONNECT 隧道，监听 TLS 端口 3129。
+
+### Step A3: 启动 buildkitd (HTTPS upstream) ✅
+
+```toml
+[proxy]
+  upstreamURL = "https://localhost:3129"
+  upstreamCACert = "/tmp/buildkit-test/certs/ca.pem"
+```
+
+启动日志无 error，CA 文件解析成功，daemon 正常运行。
+
+### Step A4: 执行构建 ✅
+
+HTTP 和 HTTPS 两个 RUN 指令均成功，返回 example.com HTML 内容。
+
+### Step A5: 验证代理日志 ✅
+
+```
+REQUEST: GET http://example.com/ (Host: example.com)
+GET OK: http://example.com/ -> 200 (-1 bytes)
+GET DONE: http://example.com/ copied 559 bytes
+
+REQUEST: CONNECT //example.com:443 (Host: example.com:443)
+CONNECT OK: example.com:443
+CONNECT DONE client->dest: 1782 bytes
+CONNECT DONE dest->client: 6534 bytes
+```
+
 ## 验证结论
 
-全部 5 项验证通过：
+全部 8 项验证通过：
 
-1. ✅ **buildkitd 启动** — proxy 配置解析成功，upstreamURL 正确应用（无效 URL 已在前序测试中验证会拒绝启动）
-2. ✅ **HTTP 代理** — `wget http://example.com` 的请求出现在 Squid access.log (`TCP_MISS/200 GET`)
-3. ✅ **HTTPS 代理 (MITM)** — `wget https://example.com` 的请求出现在 Squid access.log (`TCP_TUNNEL/200 CONNECT`)
-4. ✅ **请求记录** — buildctl 输出中包含 `proxy network requests` 记录
-5. ✅ **容器构建成功** — Alpine 镜像拉取 + wget 执行 + 内容返回均正常
+| # | 验证项 | 结果 | 证据 |
+|---|--------|------|------|
+| 1 | buildkitd 启动 (HTTP upstream) | ✅ | `running server on /tmp/buildkit-test/buildkitd.sock` |
+| 2 | HTTP → Squid | ✅ | `TCP_MISS/200 GET http://example.com/` |
+| 3 | HTTPS (MITM) → Squid | ✅ | `TCP_TUNNEL/200 CONNECT example.com:443` |
+| 4 | Proxy 请求记录 | ✅ | 构建输出含 `proxy network requests` |
+| 5 | buildkitd 启动 (HTTPS upstream + CA cert) | ✅ | daemon 正常启动，CA 文件解析成功 |
+| 6 | HTTP → HTTPS Proxy (TLS) | ✅ | `GET http://example.com/ -> 200 (559 bytes)` |
+| 7 | HTTPS MITM → HTTPS Proxy via CONNECT | ✅ | `CONNECT example.com:443 OK` / `client->dest: 1782 bytes` |
+| 8 | TLS 握手 (CA cert 校验) | ✅ | self-signed cert → CA → transport trust → tunnel established |
+
+### 第二轮测试：HTTPS upstream + CA cert 详细结果
+
+**测试配置**:
+```toml
+root = "/tmp/buildkit-test/state"
+proxyNetwork = true
+
+[proxy]
+  upstreamURL = "https://localhost:3129"
+  upstreamCACert = "/tmp/buildkit-test/certs/ca.pem"
+```
+
+**HTTPS 代理日志** (Go forward proxy, TLS 端口 3129):
+```
+REQUEST: GET http://example.com/ (Host: example.com)
+GET OK: http://example.com/ -> 200 (-1 bytes)
+GET DONE: http://example.com/ copied 559 bytes
+
+REQUEST: CONNECT //example.com:443 (Host: example.com:443)
+CONNECT OK: example.com:443
+CONNECT DONE client->dest: 1782 bytes
+CONNECT DONE dest->client: 6534 bytes
+```
+
+**证书链**: `BuildKit Test CA (ca.pem)` → `squid-proxy (squid-san.crt, SAN: localhost, 127.0.0.1)`
+
+**验证的代码路径**:
+- `newProxyTransport()` 中 `upstreamCACert != ""` 分支 → `os.ReadFile` + `x509.SystemCertPool()` + `AppendCertsFromPEM` + `TLSClientConfig.RootCAs` 设置
+- transport TLS 握手使用自定义 RootCAs 验证自签证书 → 成功
+- HTTP 请求：transport → Proxy 函数返回 `https://localhost:3129` → TLS 连接 → 代理转发
+- HTTPS 请求：transport → CONNECT 隧道 via HTTPS 代理 → TLS with target
