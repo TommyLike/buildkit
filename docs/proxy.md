@@ -133,6 +133,10 @@ proxyNetwork = true
   upstreamURL = "http://squid.internal:3128"
 ```
 
+The `upstreamURL` scheme must be `http` or `https` and include a host.
+Invalid URLs cause the daemon to refuse startup — there is no silent fallback
+to direct connection.
+
 When `upstreamURL` is set, the internal MITM proxy sends all outgoing requests
 through the specified upstream proxy instead of connecting directly. The build
 containers are unaware of the upstream proxy — they interact only with the
@@ -149,6 +153,28 @@ the CA certificate used to verify the upstream proxy's TLS certificate:
   upstreamCACert = "/etc/buildkit/squid-ca.pem"
 ```
 
+**TLS trust scope**: The upstream CA certificate is appended to the system trust
+pool via the transport's `TLSClientConfig.RootCAs`. This pool is used for **all**
+TLS connections made by the internal proxy — both the connection to the upstream
+proxy and connections to target sites (e.g., pypi.org). This is a known
+limitation of Go's `net/http`: there is no separate TLS configuration for the
+proxy hop vs. the target hop. As a result, the upstream CA is trusted for target
+site certificates as well. Ensure the upstream CA is protected with the same
+care as the internal MITM CA.
+
+### Proxy authentication
+
+The upstream proxy URL supports embedding credentials for Basic authentication:
+
+```toml
+[proxy]
+  upstreamURL = "http://user:pass@squid.internal:3128"
+```
+
+BuildKit sends a `Proxy-Authorization: Basic …` header automatically when
+credentials are present in the URL. NTLM and Kerberos authentication are not
+supported.
+
 ### How it works
 
 With upstream proxy configured, the request flow is:
@@ -159,19 +185,40 @@ Container → Internal MITM proxy → Upstream Squid → Internet
 
 - The internal MITM proxy handles HTTP/HTTPS interception, policy evaluation,
   and request capture.
-- Forwarded requests are sent through the upstream proxy's `Proxy` transport,
-  allowing the upstream proxy to cache responses.
+- Forwarded requests are sent through the upstream proxy via the transport's
+  `Proxy` function, allowing the upstream proxy to cache responses.
 - HTTPS requests are decrypted by the internal MITM proxy before being forwarded
   to the upstream proxy, so the upstream proxy can inspect and cache HTTP-level
   content.
 - The internal proxy's CA certificate is still injected into build containers;
-  the upstream proxy's CA certificate is only used by the internal proxy's
-  transport when connecting to an HTTPS upstream proxy.
+  the upstream proxy's CA certificate is used by the internal proxy's transport.
+
+### Failure semantics
+
+- **Invalid configuration** (bad URL, missing CA file, unparseable certificate):
+  the daemon refuses to start. Fix the configuration before restarting.
+- **Upstream proxy unreachable or down**: all build network requests fail.
+  Builds see `502 Bad Gateway` or connection errors. Deploy the upstream proxy
+  with high availability if build availability is critical.
+- **CA certificate rotation**: the CA file is read once at daemon startup.
+  After rotating the certificate, restart `buildkitd`.
+
+### Environment variable precedence
+
+The upstream proxy is configured exclusively through the daemon configuration
+file. The daemon process's own `HTTP_PROXY` / `HTTPS_PROXY` environment
+variables are **not** consulted for the internal proxy's egress path — they were
+explicitly ignored (`Proxy: nil`) before this feature, and the `upstreamURL`
+config replaces that behavior when set.
 
 ## Scope and limitations
 
 The proxy network feature currently applies to exec traffic. It does not replace
-image resolver, Git, HTTP source, or other non-exec fetch paths.
+image resolver, Git, HTTP source, or other non-exec fetch paths. When an
+upstream proxy is configured, only HTTP and HTTPS traffic that passes through
+the internal MITM proxy's `http.Transport` is forwarded to the upstream proxy.
+Non-HTTP egress paths (if any) that use the egress provider's dialer directly
+are not routed through the upstream proxy.
 
 The current implementation is Linux-focused. Rootless workers also have the
 usual rootless networking limitations, where worker networking may behave like
@@ -180,3 +227,8 @@ host networking.
 Applications that ignore `HTTP_PROXY` and `HTTPS_PROXY`, use custom trust
 stores, or open raw TCP connections cannot bypass the proxy. That traffic is
 blocked instead of being captured.
+
+There is no `noProxy`/bypass mechanism for the upstream proxy: all proxied
+requests are forwarded to the upstream, including requests to internal mirrors.
+If some destinations must bypass the upstream proxy, configure the upstream
+proxy itself (e.g., Squid's `always_direct`) to handle those exceptions.

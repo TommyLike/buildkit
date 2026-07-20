@@ -7,9 +7,11 @@ import (
 	"container/list"
 	"context"
 	"crypto/x509"
+	"encoding/pem"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -100,7 +102,8 @@ func TestProxyHandlerRoundTripIgnoresClientContextCancel(t *testing.T) {
 }
 
 func TestNewProxyTransportAttemptsHTTP2(t *testing.T) {
-	tr := newProxyTransport("", nil)
+	tr, err := newProxyTransport("", "")
+	require.NoError(t, err)
 	t.Cleanup(tr.CloseIdleConnections)
 
 	// The provider transport is cloned per namespace and given a custom
@@ -120,7 +123,8 @@ func TestProxyTransportCloneHTTP2Dial(t *testing.T) {
 	upstream.StartTLS()
 	t.Cleanup(upstream.Close)
 
-	base := newProxyTransport("", nil)
+	base, err := newProxyTransport("", "")
+	require.NoError(t, err)
 	t.Cleanup(base.CloseIdleConnections)
 
 	tr := base.Clone()
@@ -439,4 +443,76 @@ func newTestCertProvider(t *testing.T) *provider {
 		certs: map[string]*certCacheEntry{},
 		lru:   list.New(),
 	}
+}
+
+func TestNewProxyTransportNoUpstream(t *testing.T) {
+	tr, err := newProxyTransport("", "")
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.Nil(t, tr.Proxy)
+	require.Nil(t, tr.TLSClientConfig)
+	require.True(t, tr.ForceAttemptHTTP2)
+}
+
+func TestNewProxyTransportValidHTTPUpstream(t *testing.T) {
+	tr, err := newProxyTransport("http://squid.internal:3128", "")
+	require.NoError(t, err)
+	require.NotNil(t, tr)
+	require.NotNil(t, tr.Proxy)
+	require.Nil(t, tr.TLSClientConfig)
+}
+
+func TestNewProxyTransportURLMissingScheme(t *testing.T) {
+	_, err := newProxyTransport("squid.internal:3128", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "scheme must be http or https")
+}
+
+func TestNewProxyTransportURLUnsupportedScheme(t *testing.T) {
+	_, err := newProxyTransport("socks5://squid.internal:1080", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "scheme must be http or https")
+}
+
+func TestNewProxyTransportURLNoHost(t *testing.T) {
+	_, err := newProxyTransport("http://", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no host")
+}
+
+func TestNewProxyTransportCACertNotFound(t *testing.T) {
+	_, err := newProxyTransport("https://squid.internal:3128", "/nonexistent/path/ca.pem")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to read upstream proxy CA cert")
+}
+
+func TestNewProxyTransportCACertInvalidPEM(t *testing.T) {
+	f, err := os.CreateTemp("", "buildkit-test-ca-*.pem")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	_, err = f.WriteString("not a certificate\n")
+	require.NoError(t, err)
+	f.Close()
+
+	_, err = newProxyTransport("https://squid.internal:3128", f.Name())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to parse any certificates")
+}
+
+func TestNewProxyTransportCACertValidPEM(t *testing.T) {
+	// Use a self-signed cert as test CA material
+	_, ca, _, err := newCA()
+	require.NoError(t, err)
+
+	f, err := os.CreateTemp("", "buildkit-test-ca-*.pem")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	err = pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw})
+	require.NoError(t, err)
+	f.Close()
+
+	tr, err := newProxyTransport("https://squid.internal:3128", f.Name())
+	require.NoError(t, err)
+	require.NotNil(t, tr.TLSClientConfig)
+	require.NotNil(t, tr.TLSClientConfig.RootCAs)
 }
