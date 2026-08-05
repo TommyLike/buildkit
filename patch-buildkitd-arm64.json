@@ -1,0 +1,8 @@
+[
+  {"op": "replace", "path": "/spec/template/spec/containers/0/image", "value": "swr.cn-southwest-2.myhuaweicloud.com/modelfoundry/moby/buildkit:v0.31.x-proxy-rootless"},
+  {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--proxy-network"},
+  {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--proxy-upstream-url"},
+  {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "http://squid-cache.squid.svc.cluster.local:3128"},
+  {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--proxy-upstream-cacert"},
+  {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "/etc/squid-ca/squid-ca.pem"}
+]

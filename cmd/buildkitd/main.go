@@ -238,6 +238,16 @@ func main() {
 			Usage: "enable proxy network enforcement for all builds",
 		},
 		&cli.StringFlag{
+			Name:  "proxy-upstream-url",
+			Usage: "URL of the upstream forward proxy that the internal MITM proxy forwards requests to (requires --proxy-network)",
+			Value: defaultConf.Proxy.UpstreamURL,
+		},
+		&cli.StringFlag{
+			Name:  "proxy-upstream-cacert",
+			Usage: "path to a PEM-encoded CA certificate used to verify the upstream proxy's TLS certificate (requires --proxy-network)",
+			Value: defaultConf.Proxy.UpstreamCACert,
+		},
+		&cli.StringFlag{
 			Name:  "otel-socket-path",
 			Usage: "OTEL collector trace socket path",
 		},
@@ -674,6 +684,12 @@ func applyMainFlags(c *cli.Command, cfg *config.Config, warnings *[]string) erro
 	}
 	if c.IsSet("proxy-network") {
 		cfg.ProxyNetwork = c.Bool("proxy-network")
+	}
+	if c.IsSet("proxy-upstream-url") {
+		cfg.Proxy.UpstreamURL = c.String("proxy-upstream-url")
+	}
+	if c.IsSet("proxy-upstream-cacert") {
+		cfg.Proxy.UpstreamCACert = c.String("proxy-upstream-cacert")
 	}
 
 	if c.IsSet("debugaddr") {
