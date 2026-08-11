@@ -307,6 +307,8 @@ func containerdWorkerInitializer(c *cli.Command, common workerInitializerOpt) ([
 			BridgeName:   common.config.Workers.Containerd.BridgeName,
 			BridgeSubnet: common.config.Workers.Containerd.BridgeSubnet,
 		},
+		ProxyUpstreamURL:    common.config.Proxy.UpstreamURL,
+		ProxyUpstreamCACert: common.config.Proxy.UpstreamCACert,
 	}
 
 	var parallelismSem *semaphore.Weighted

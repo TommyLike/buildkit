@@ -322,6 +322,8 @@ func ociWorkerInitializer(c *cli.Command, common workerInitializerOpt) ([]worker
 			BridgeName:   common.config.Workers.OCI.BridgeName,
 			BridgeSubnet: common.config.Workers.OCI.BridgeSubnet,
 		},
+		ProxyUpstreamURL:    common.config.Proxy.UpstreamURL,
+		ProxyUpstreamCACert: common.config.Proxy.UpstreamCACert,
 	}
 
 	var parallelismSem *semaphore.Weighted

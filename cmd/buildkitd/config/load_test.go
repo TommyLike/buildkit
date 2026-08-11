@@ -16,6 +16,10 @@ trace=true
 insecure-entitlements = ["security.insecure"]
 proxyNetwork = true
 
+[proxy]
+upstreamURL = "http://squid.internal:3128"
+upstreamCACert = "/etc/buildkit/squid-ca.pem"
+
 [gc]
 enabled=true
 
@@ -150,4 +154,7 @@ searchDomains=["example.com"]
 	require.Equal(t, []string{"1.1.1.1", "8.8.8.8"}, cfg.DNS.Nameservers)
 	require.Equal(t, []string{"example.com"}, cfg.DNS.SearchDomains)
 	require.Equal(t, []string{"edns0"}, cfg.DNS.Options)
+
+	require.Equal(t, "http://squid.internal:3128", cfg.Proxy.UpstreamURL)
+	require.Equal(t, "/etc/buildkit/squid-ca.pem", cfg.Proxy.UpstreamCACert)
 }
